@@ -1,5 +1,5 @@
-/*
- *  Desynchronized Multi-Channel TCP Congestion Control Algorithm
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*  Desynchronized Multi-Channel TCP Congestion Control Algorithm
  *
  *  Implementation based on publications of "DMCTCP:Desynchronized Multi-Channel
  *  TCP for high speed access networks with tiny buffers" in 23rd international
@@ -49,9 +49,10 @@ static void mctcp_desync_init(struct sock *sk)
 {
 	if (mptcp(tcp_sk(sk))) {
 		struct mctcp_desync *ca = inet_csk_ca(mptcp_meta_sk(sk));
+
 		ca->off_tstamp = 0;
 		ca->off_subfid = 0;
-    }
+	}
     /* If we do not mptcp, behave like reno: return */
 }
 
@@ -59,12 +60,7 @@ static void mctcp_desync_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	if (!mptcp(tp)) {
-		tcp_reno_cong_avoid(sk, ack, acked);
-		return;
-	} else if (!tcp_is_cwnd_limited(sk)) {
-		return;
-	} else {
+	if (tcp_is_cwnd_limited(sk) && mptcp(tp)) {
 		const struct mctcp_desync *ca = inet_csk_ca(mptcp_meta_sk(sk));
 		const u8 subfid = tp->mptcp->path_index;
 
@@ -78,30 +74,32 @@ static void mctcp_desync_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			if (ca->off_subfid) {
 				/* passed initial phase, allow slow start */
 				tcp_slow_start(tp, acked);
-			} else if (MASTER_CHANNEL == tp->mptcp->path_index) {
+			} else if (tp->mptcp->path_index == MASTER_CHANNEL) {
 				/* master channel is normal slow start in
-				 * initial phase */
+				 * initial phase
+				 */
 				tcp_slow_start(tp, acked);
 			} else {
 				/* secondary channels increase slowly until
 				 * the initial phase passed
 				 */
-				tp->snd_ssthresh = tp->snd_cwnd = INI_MIN_CWND;
+				tp->snd_cwnd = INI_MIN_CWND;
+				tp->snd_ssthresh = INI_MIN_CWND;
 			}
-			return;
 		} else {
 			/* In dangerous area, increase slowly and linearly. */
 			const struct mptcp_tcp_sock *mptcp;
 
 			/* get total cwnd and the subflow that has min cwnd */
 			mptcp_for_each_sub(tp->mpcb, mptcp) {
-				const struct sock *sub_sk = mptcp_to_sock(mptcp);
+				const struct sock *sub_sk =
+						mptcp_to_sock(mptcp);
 
 				if (mctcp_cc_sk_can_send(sub_sk)) {
 					const struct tcp_sock *sub_tp =
 								tcp_sk(sub_sk);
 					agg_cwnd += sub_tp->snd_cwnd;
-					if(min_cwnd > sub_tp->snd_cwnd) {
+					if (min_cwnd > sub_tp->snd_cwnd) {
 						min_cwnd = sub_tp->snd_cwnd;
 						min_cwnd_subfid =
 						      sub_tp->mptcp->path_index;
@@ -116,16 +114,17 @@ static void mctcp_desync_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 						  acked);
 			}
 		}
+	} else if (!mptcp(tp)) {
+		tcp_reno_cong_avoid(sk, ack, acked);
 	}
 }
 
 static u32 mctcp_desync_ssthresh(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
+	u32 ret_val = max(tp->snd_cwnd >> 1U, 2U);
 
-	if (!mptcp(tp)) {
-		return max(tp->snd_cwnd >> 1U, 2U);
-	} else {
+	if (mptcp(tp)) {
 		struct mctcp_desync *ca = inet_csk_ca(mptcp_meta_sk(sk));
 		const u8 subfid = tp->mptcp->path_index;
 		const struct mptcp_tcp_sock *mptcp;
@@ -138,6 +137,7 @@ static u32 mctcp_desync_ssthresh(struct sock *sk)
 
 			if (mctcp_cc_sk_can_send(sub_sk)) {
 				const struct tcp_sock *sub_tp = tcp_sk(sub_sk);
+
 				if (max_cwnd < sub_tp->snd_cwnd) {
 					max_cwnd = sub_tp->snd_cwnd;
 					max_cwnd_subfid =
@@ -152,16 +152,18 @@ static u32 mctcp_desync_ssthresh(struct sock *sk)
 
 			if (delta < (tp->srtt_us >> 3)) {
 				/* desynchronize */
-				return tp->snd_cwnd;
+				ret_val = tp->snd_cwnd;
 			} else {
 				ca->off_tstamp = now;
 				ca->off_subfid = subfid;
-				return max(max_cwnd >> 1U, 2U);
+				ret_val = max(max_cwnd >> 1U, 2U);
 			}
 		} else {
-			return tp->snd_cwnd;
+			ret_val = tp->snd_cwnd;
 		}
 	}
+
+	return ret_val;
 }
 
 static struct tcp_congestion_ops mctcp_desync = {

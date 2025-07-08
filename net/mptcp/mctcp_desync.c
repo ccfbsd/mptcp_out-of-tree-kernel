@@ -53,7 +53,7 @@ static void mctcp_desync_init(struct sock *sk)
 		ca->off_tstamp = 0;
 		ca->off_subfid = 0;
 	}
-    /* If we do not mptcp, behave like reno: return */
+    /* If not mptcp, behave like reno: return */
 }
 
 static void mctcp_desync_cong_avoid(struct sock *sk, u32 ack, u32 acked)
@@ -62,7 +62,6 @@ static void mctcp_desync_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (tcp_is_cwnd_limited(sk) && mptcp(tp)) {
 		const struct mctcp_desync *ca = inet_csk_ca(mptcp_meta_sk(sk));
-		const u8 subfid = tp->mptcp->path_index;
 
 		/* current aggregated cwnd */
 		u32 agg_cwnd = 0;
@@ -107,7 +106,7 @@ static void mctcp_desync_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 				}
 			}
 			/* the smallest subflow grows faster than others */
-			if (subfid == min_cwnd_subfid) {
+			if (tp->mptcp->path_index == min_cwnd_subfid) {
 				tcp_cong_avoid_ai(tp, min_cwnd, acked);
 			} else {
 				tcp_cong_avoid_ai(tp, agg_cwnd - min_cwnd,
@@ -126,7 +125,6 @@ static u32 mctcp_desync_ssthresh(struct sock *sk)
 
 	if (mptcp(tp)) {
 		struct mctcp_desync *ca = inet_csk_ca(mptcp_meta_sk(sk));
-		const u8 subfid = tp->mptcp->path_index;
 		const struct mptcp_tcp_sock *mptcp;
 		u32 max_cwnd = 0;
 		u8 max_cwnd_subfid = 0;
@@ -145,8 +143,8 @@ static u32 mctcp_desync_ssthresh(struct sock *sk)
 				}
 			}
 		}
-		/* Use high resolution clock. */
-		if (subfid == max_cwnd_subfid) {
+
+		if (tp->mptcp->path_index == max_cwnd_subfid) {
 			u64 now = tcp_clock_us();
 			u32 delta = tcp_stamp_us_delta(now, ca->off_tstamp);
 
@@ -155,7 +153,7 @@ static u32 mctcp_desync_ssthresh(struct sock *sk)
 				ret_val = tp->snd_cwnd;
 			} else {
 				ca->off_tstamp = now;
-				ca->off_subfid = subfid;
+				ca->off_subfid = tp->mptcp->path_index;
 				ret_val = max(max_cwnd >> 1U, 2U);
 			}
 		} else {
